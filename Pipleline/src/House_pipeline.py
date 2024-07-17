@@ -188,7 +188,7 @@ def get_the_latest_time(type,col_name,myclient) :
     date_string = datetime.datetime.fromtimestamp(latest_time/1000).strftime('%Y-%m-%d %H:%M:%S')
     return (date_string)
 def get_sql_latest_time(table_name) : 
-    url = "jdbc:sqlserver://192.168.56.1:1433;databaseName=data_warehouse"
+    url = "jdbc:sqlserver://DESKTOP-301A075\DATA_WAREHOUSE:1433;databaseName=data_warehouse"
     properties = {
         "user": "sa",
         "password": "tien",

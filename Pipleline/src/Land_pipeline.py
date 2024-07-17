@@ -142,7 +142,7 @@ def read_info(table_name) :
     return info_df
 
 def write_to_SQLServer(df,table_name) : 
-    url = "jdbc:sqlserver://192.168.56.1:1433;databaseName=data_warehouse"
+    url = "jdbc:sqlserver://DESKTOP-301A075\DATA_WAREHOUSE:1433;databaseName=data_warehouse"
     properties = {
         "user": "sa",
         "password": "tien",
