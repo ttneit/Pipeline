@@ -3,12 +3,10 @@ import pyspark.sql.functions as sf
 from uuid import *
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *
-from uuid import * 
 from pyspark.sql.window import Window as W
-import findspark
+import datetime
 from pyspark.sql.types import NumericType
-findspark.init()
-findspark.find()
+
 def preprocessing_col(element) : 
     full_col = ['avatar','zero_deposit','webp_image','subject','region_v2','image','body','rooms','price_string','living_size','longitude','special_display','street_id','company_ad','category_name','area',
         'region','toilets','floors','phone_hidden','type','length','account_id','orig_list_time','ward_name','owner','address','property_legal_document','location','furnishing_sell','account_oid','price_million_per_m2',
@@ -134,7 +132,7 @@ def preprocessing(df,ward_df,area_df,category_df,region_df) :
     full_filled_df = full_filled_df.withColumn("orig_list_time",sf.when(sf.col("orig_list_time") == 0, sf.col("list_time")).otherwise(sf.col("orig_list_time")))
     print("--------------------------------------------------------------------------")
     print('Create date_string columns based on list_time')
-    final_df = full_filled_df.withColumn('date',sf.date_format((sf.col('list_time')/1000).cast('timestamp'),'yyyy-MM-dd')).orderBy('list_time',ascending=False)
+    final_df = full_filled_df.withColumn('date',sf.date_format((sf.col('list_time')/1000).cast('timestamp'),'yyyy-MM-dd HH:mm:ss')).orderBy('list_time',ascending=False)
     return final_df 
 
 
@@ -172,7 +170,38 @@ def write_to_SQLServer(df,table_name) :
 
     return print('Data imported SQL server successfully')
 
-def main(myclient,type,collection_name) : 
+def get_the_latest_time(type,col_name,myclient) : 
+    pipeline = [
+        {
+            "$group": {
+                "_id": None,
+                "latest_list_time": {"$max": "$list_time"},
+                "latest_orig_list_time": {"$max": "$orig_list_time"}
+            }
+        }
+    ]
+    db_name = type +'_real_estate_datalake'
+    myDB  = myclient[db_name]
+    col = myDB[col_name]
+    result = list(col.aggregate(pipeline))
+    latest_time = (max(result[0].get('latest_list_time'),result[0].get('latest_orig_list_time') ))
+    date_string = datetime.datetime.fromtimestamp(latest_time/1000).strftime('%Y-%m-%d %H:%M:%S')
+    return (date_string)
+def get_sql_latest_time(table_name) : 
+    url = "jdbc:sqlserver://192.168.56.1:1433;databaseName=data_warehouse"
+    properties = {
+        "user": "sa",
+        "password": "tien",
+        "driver": "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+    }
+    mysql_time = spark.read.jdbc(url=url, table=table_name, properties=properties)
+    mysql_time = (mysql_time.select('date').agg({'date':'max'}).take(1)[0][0])
+    if mysql_time is None : 
+        return '1900-01-01 00:00:00'
+    else :
+        return mysql_time
+
+def main(myclient,type,collection_name,mssql_time) : 
     print("--------------------------------------------------------------------------")
     print('Extracting data from MongoDB')
     db_name = type+'_real_estate_datalake'
@@ -189,6 +218,9 @@ def main(myclient,type,collection_name) :
     print('Preprocess MongoDB data')
     final_df = house_datalake(docs,ward_df,area_df,category_df,region_df)
     final_df = final_df.dropDuplicates(subset= ['ad_id'])
+    print("--------------------------------------------------------------------------")
+    print('Extract updated data')
+    final_df = final_df.filter(final_df.date > mssql_time)
     final_df.printSchema()
     print("--------------------------------------------------------------------------")
     print('Finish preprocessing data')
@@ -203,23 +235,37 @@ if __name__ == "__main__" :
     myclient = pymongo.MongoClient("mongodb://localhost:27017/")
     print("--------------------------------------------------------------------------")
     print('Start process sell house data')
-    final_sell_df = main(myclient,'sell','house')
+    mongodb_latest_time = get_the_latest_time('sell','house',myclient)
+    mssql_time = get_sql_latest_time('sell_house_data')
+    print(mongodb_latest_time)
+    print(mssql_time)
+    if mongodb_latest_time <= mssql_time : 
+        print("No new data")
+    else : 
+        final_sell_df = main(myclient,'sell','house',mssql_time)
 
-    final_sell_df.show()
+        final_sell_df.show()
 
-    print("--------------------------------------------------------------------------")
-    print('Write sell house data to SQL Server')
-    write_to_SQLServer(final_sell_df,'sell_house_data')
+        print("--------------------------------------------------------------------------")
+        print('Write sell house data to SQL Server')
+        write_to_SQLServer(final_sell_df,'sell_house_data')
 
     print("--------------------------------------------------------------------------")
     print('Start process rent house data')
-    final_rent_df = main(myclient,'rent','house')
+    mongodb_latest_time = get_the_latest_time('rent','house',myclient)
+    mssql_time = get_sql_latest_time('rent_house_data')
+    print(mongodb_latest_time)
+    print(mssql_time)
+    if mongodb_latest_time <= mssql_time : 
+        print("No new data")
+    else : 
+        final_rent_df = main(myclient,'rent','house',mssql_time)
 
-    final_rent_df.show()
+        final_rent_df.show()
 
-    print("--------------------------------------------------------------------------")
-    print('Write rent house data to SQL Server')
-    write_to_SQLServer(final_rent_df,'rent_house_data')
+        print("--------------------------------------------------------------------------")
+        print('Write rent house data to SQL Server')
+        write_to_SQLServer(final_rent_df,'rent_house_data')
 
 
 

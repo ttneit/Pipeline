@@ -1,23 +1,24 @@
 import pymongo
 import pyspark.sql.functions as sf
-from uuid import *
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *
 from uuid import * 
 from pyspark.sql.window import Window as W
-import findspark
-import datetime
 from pyspark.sql.types import NumericType
-findspark.init()
-findspark.find()
+import datetime
+
 def preprocessing_col(element) : 
-    full_col = ['ad_id', 'list_id', 'list_time', 'orig_list_time', 'date', 'account_id', 'account_oid', 'account_name', 'state', 'subject', 'body', 'category', 'category_name', 'area', 'area_name', 'region', 'region_name', 'company_ad', 'type', 'price', 'price_string', 'image', 'webp_image', 'number_of_images', 'avatar', 'property_legal_document', 'size', 'region_v2', 'area_v2', 'ward', 'ward_name', 'direction', 'price_million_per_m2', 'land_type', 'width', 'length', 'contain_videos', 'location', 'longitude', 'latitude', 'phone_hidden', 'owner', 'zero_deposit', 'ad_labels', 'special_display', 'has_video', 'shop_alias']
+    full_col = ['ad_id', 'list_id', 'list_time', 'orig_list_time', 'date', 'account_id', 'account_oid', 'account_name', 'state', 'subject', 'body', 
+                'category', 'category_name', 'area', 'area_name', 'region', 'region_name', 'company_ad', 'type', 'price', 'price_string', 'image', 'webp_image', 
+                'special_display', 'number_of_images', 'avatar', 'property_legal_document', 'commercial_type', 'size', 'region_v2', 'area_v2', 'ward', 'ward_name', 
+                'direction', 'price_million_per_m2', 'furnishing_sell', 'contain_videos', 'location', 'longitude', 
+                'latitude', 'phone_hidden', 'owner', 'zero_deposit', 'has_video', 'shop_alias', 'streetnumber_display', 'address', 'block', 'label_campaigns']
     
     for col in full_col : 
         if col not in element.keys() : 
             element[col] = None
     
-    numeric_col = ['list_time', 'orig_list_time', 'price', 'size', 'price_million_per_m2', 'width', 'length', 'longitude', 'latitude']
+    numeric_col = ['size', 'price_million_per_m2', 'longitude', 'latitude','list_time','orig_list_time','price']
 
     for col in numeric_col : 
         element[col] = float(element[col]) if element[col] is not None else None
@@ -50,9 +51,11 @@ def create_spark(docs) :
         StructField("price_string", StringType(), True),
         StructField("image", StringType(), True),
         StructField("webp_image", StringType(), True),
+        StructField("special_display", BooleanType(), True),
         StructField("number_of_images", IntegerType(), True),
         StructField("avatar", StringType(), True),
         StructField("property_legal_document", IntegerType(), True),
+        StructField("commercial_type", IntegerType(), True),
         StructField("size", FloatType(), True),
         StructField("region_v2", IntegerType(), True),
         StructField("area_v2", IntegerType(), True),
@@ -60,9 +63,7 @@ def create_spark(docs) :
         StructField("ward_name", StringType(), True),
         StructField("direction", IntegerType(), True),
         StructField("price_million_per_m2", FloatType(), True),
-        StructField("land_type", IntegerType(), True),
-        StructField("width", FloatType(), True),
-        StructField("length", FloatType(), True),
+        StructField("furnishing_sell", IntegerType(), True),
         StructField("contain_videos", IntegerType(), True),
         StructField("location", StringType(), True),
         StructField("longitude", FloatType(), True),
@@ -70,10 +71,12 @@ def create_spark(docs) :
         StructField("phone_hidden", BooleanType(), True),
         StructField("owner", BooleanType(), True),
         StructField("zero_deposit", BooleanType(), True),
-        StructField("ad_labels", StringType(), True),
-        StructField("special_display", BooleanType(), True),
         StructField("has_video", BooleanType(), True),
-        StructField("shop_alias", StringType(), True)
+        StructField("shop_alias", StringType(), True),
+        StructField("streetnumber_display", IntegerType(), True),
+        StructField("address", StringType(), True),
+        StructField("block", StringType(), True),
+        StructField("label_campaigns", StringType(), True),
     ])
 
     df = spark.createDataFrame(docs,schema)
@@ -99,7 +102,8 @@ def fillna_cols(df):
 
 
 def preprocessing(df,ward_df,area_df,category_df,region_df) : 
-
+    mode_furnish = df.dropna(subset='furnishing_sell').groupBy('furnishing_sell').count().orderBy('count',ascending=False).first()[0]
+    df = df.fillna({'furnishing_sell' :mode_furnish})
     filtered_df = df.filter(
         ~(sf.col("ward").isNull() ) &
         ~(sf.col("area").isNull() ) &
@@ -117,11 +121,11 @@ def preprocessing(df,ward_df,area_df,category_df,region_df) :
     full_filled_df = full_filled_df.withColumn("orig_list_time",sf.when(sf.col("orig_list_time") == 0, sf.col("list_time")).otherwise(sf.col("orig_list_time")))
     print("--------------------------------------------------------------------------")
     print('Create date_string columns based on list_time')
-    final_df = full_filled_df.withColumn('date',sf.date_format((sf.col('list_time')/1000).cast('timestamp'),'yyyy-MM-dd HH:mm:ss')).orderBy('list_time',ascending=False)
+    final_df = full_filled_df.withColumn('date',sf.date_format((sf.col('list_time')/1000).cast('timestamp'),'yyyy-MM-dd')).orderBy('list_time',ascending=False)
     return final_df 
 
 
-def land_datalake(docs,ward_df,area_df,category_df,region_df) : 
+def office_datalake(docs,ward_df,area_df,category_df,region_df) : 
     print("--------------------------------------------------------------------------")
     print('Preprocess data before convert into Spark DataFrame')
     preprocessed_dict = map(preprocessing_col,docs)
@@ -173,7 +177,7 @@ def get_the_latest_time(type,col_name,myclient) :
     date_string = datetime.datetime.fromtimestamp(latest_time/1000).strftime('%Y-%m-%d %H:%M:%S')
     return (date_string)
 def get_sql_latest_time(table_name) : 
-    url = "jdbc:sqlserver://DESKTOP-301A075\DATA_WAREHOUSE:1433;databaseName=data_warehouse"
+    url = "jdbc:sqlserver://192.168.56.1:1433;databaseName=data_warehouse"
     properties = {
         "user": "sa",
         "password": "tien",
@@ -186,7 +190,7 @@ def get_sql_latest_time(table_name) :
     else :
         return mysql_time
 
-def main(myclient,type,collection_name,mssql_time) : 
+def main(myclient,type,collection_name) : 
     print("--------------------------------------------------------------------------")
     print('Extracting data from MongoDB')
     db_name = type+'_real_estate_datalake'
@@ -201,15 +205,15 @@ def main(myclient,type,collection_name,mssql_time) :
     category_df = read_info('category_info')
     print("--------------------------------------------------------------------------")
     print('Preprocess MongoDB data')
-    final_df = land_datalake(docs,ward_df,area_df,category_df,region_df)
+    final_df = office_datalake(docs,ward_df,area_df,category_df,region_df)
     final_df = final_df.dropDuplicates(subset=['ad_id'])
-    print("--------------------------------------------------------------------------")
-    print('Extract updated data')
-    final_df = final_df.filter(final_df.date > mssql_time)
     final_df.printSchema()
     print("--------------------------------------------------------------------------")
     print('Finish preprocessing data')
     return final_df
+
+
+
 
 if __name__ == "__main__" : 
 
@@ -219,33 +223,34 @@ if __name__ == "__main__" :
     print('Connect to MongoDB')
     myclient = pymongo.MongoClient("mongodb://localhost:27017/")
     print("--------------------------------------------------------------------------")
-    print('Start process sell land data')
-    mongodb_latest_time = get_the_latest_time('sell','land',myclient)
-    mssql_time = get_sql_latest_time('sell_land_data')
+    print('Start process sell office data')
+    mongodb_latest_time = get_the_latest_time('sell','office',myclient)
+    mssql_time = get_sql_latest_time('sell_office_data')
     print(mongodb_latest_time)
     print(mssql_time)
     if mongodb_latest_time <= mssql_time : 
         print("No new data")
     else : 
-        final_sell_df = main(myclient,'sell','land',mssql_time)
+        final_sell_df = main(myclient,'sell','office')
 
         final_sell_df.show()
 
         print("--------------------------------------------------------------------------")
-        print('Write sell land data to SQL Server')
-        write_to_SQLServer(final_sell_df,'sell_land_data')
+        print('Write sell office data to SQL Server')
+        write_to_SQLServer(final_sell_df,'sell_office_data')
+
 
     print("--------------------------------------------------------------------------")
-    print('Start process rent land data')
-    mongodb_latest_time = get_the_latest_time('rent','land',myclient)
-    mssql_time = get_sql_latest_time('rent_land_data')
+    print('Start process rent office data')
+    mongodb_latest_time = get_the_latest_time('rent','office',myclient)
+    mssql_time = get_sql_latest_time('rent_office_data')
     if mongodb_latest_time <= mssql_time : 
         print("No new data")
     else : 
-        final_rent_df = main(myclient,'rent','land',mssql_time)
+        final_rent_df = main(myclient,'rent','office')
 
         final_rent_df.show()
 
         print("--------------------------------------------------------------------------")
-        print('Write rent land data to SQL Server')
-        write_to_SQLServer(final_rent_df,'rent_land_data')
+        print('Write rent office data to SQL Server')
+        write_to_SQLServer(final_rent_df,'rent_office_data')
